@@ -1,18 +1,15 @@
 #include <stdio.h>
 #include <libavformat/avformat.h>
 
-int waitkey =0;
-
 typedef struct TsManager {
     AVStream *out_stream;
     AVStream *in_stream;
-    AVCodecContext *in_video_ctx;
-    AVCodecContext *out_video_ctx;
     AVFormatContext *ofmt_ctx;
     AVFormatContext *ifmt_ctx;
     AVBSFContext *bsf_ctx;
     AVDictionary *opts;
     int frameindex;
+    int wait_key_frame;
 }TsManager;
 
 // < 0 = error
@@ -20,7 +17,7 @@ typedef struct TsManager {
 // 1 = P-Frame
 // 2 = B-Frame
 // 3 = S-Frame
-int getVopType( const void *p, int len )
+int get_vop_type( const void *p, int len )
 {   
     if ( !p || 6 >= len )
         return -1;
@@ -51,26 +48,23 @@ int getVopType( const void *p, int len )
     return -1;
 }
 
-int initVideoCodecContex(AVCodecContext **video_ctx, enum AVCodecID cid, AVDictionary **opts, int fps,int in_w,int in_h){
+int init_video_codec_contex(AVCodecContext **video_ctx, enum AVCodecID cid, AVDictionary **opts, int fps,int in_w,int in_h){
     // AVCodec* pCodec = avcodec_find_encoder(AV_CODEC_ID_H264);
     AVCodec* pCodec = avcodec_find_encoder(cid);
-    // AVCodec* pCodec = avcodec_find_encoder(tmr->ofmt_ctx->oformat->video_codec);
     if(pCodec==NULL){
         printf("Unsupport codec\n");
         return -1;
     }
 
     (*video_ctx) = avcodec_alloc_context3(pCodec);
-
     (*video_ctx)->codec_id = cid;  
     (*video_ctx)->codec_type = AVMEDIA_TYPE_VIDEO; 
-    printf("get codec %d\n",cid);
     // tmr->video_ctx->codec_id = tmr->ofmt_ctx->oformat->video_codec; 
     (*video_ctx)->pix_fmt = AV_PIX_FMT_YUV420P;  
     (*video_ctx)->width = in_w;    
     (*video_ctx)->height = in_h;  
-    (*video_ctx)->bit_rate = 400000;    
-    (*video_ctx)->gop_size=25;  
+    // (*video_ctx)->bit_rate = 400000;    
+    (*video_ctx)->gop_size=fps;  
   
     (*video_ctx)->time_base = (AVRational){1,fps};
     //video_enc_ctx->time_base.num = 1;    
@@ -80,8 +74,8 @@ int initVideoCodecContex(AVCodecContext **video_ctx, enum AVCodecID cid, AVDicti
     //pCodecCtx->me_range = 16;  
     //pCodecCtx->max_qdiff = 4;  
     //pCodecCtx->qcompress = 0.6;  
-    (*video_ctx)->qmin = 10;  
-    (*video_ctx)->qmax = 51;  
+    // (*video_ctx)->qmin = 10;  
+    // (*video_ctx)->qmax = 51;  
     // (*video_ctx)->gop_size = 12;
 
     // (*video_ctx)->bit_rate = 1400 * 1000;
@@ -121,7 +115,9 @@ int initVideoCodecContex(AVCodecContext **video_ctx, enum AVCodecID cid, AVDicti
 // }
 
 
-int encodeSetting(const char* filename,TsManager *tmr){
+int encode_setting(const char* filename,TsManager *tmr){
+    AVCodecContext *in_video_ctx;
+    AVCodecContext *out_video_ctx;
     // ---- input data stream
     tmr->ifmt_ctx = avformat_alloc_context();
     if (!tmr->ifmt_ctx) {
@@ -131,14 +127,13 @@ int encodeSetting(const char* filename,TsManager *tmr){
 
     //new AVStream as fmt_ctx，free by avformat_free_context
     tmr->in_stream = avformat_new_stream(tmr->ifmt_ctx, NULL);
-    initVideoCodecContex(&tmr->in_video_ctx,AV_CODEC_ID_H264,&tmr->opts,15,640,360);
+    init_video_codec_contex(&in_video_ctx,AV_CODEC_ID_H264,&tmr->opts,15,640,360);
    
     //copy AVCodecContext to AVCodecParameters
-    avcodec_parameters_from_context(tmr->in_stream->codecpar, tmr->in_video_ctx);
-    av_stream_set_r_frame_rate(tmr->in_stream, tmr->in_video_ctx->time_base);
-    tmr->in_stream->time_base = tmr->in_video_ctx->time_base;
+    avcodec_parameters_from_context(tmr->in_stream->codecpar, in_video_ctx);
+    av_stream_set_r_frame_rate(tmr->in_stream, in_video_ctx->time_base);
+    tmr->in_stream->time_base = in_video_ctx->time_base;
     
-
     // ---- output data stream
     avformat_alloc_output_context2(&tmr->ofmt_ctx, NULL, NULL, filename);//need free by avformat_free_context
     if (!tmr->ofmt_ctx) {
@@ -155,18 +150,19 @@ int encodeSetting(const char* filename,TsManager *tmr){
 
     //new AVStream as fmt_ctx，free by avformat_free_context
     tmr->out_stream = avformat_new_stream(tmr->ofmt_ctx, NULL);
-    initVideoCodecContex(&tmr->out_video_ctx,tmr->ofmt_ctx->oformat->video_codec,&tmr->opts,15,640,360);
+    init_video_codec_contex(&out_video_ctx,tmr->ofmt_ctx->oformat->video_codec,&tmr->opts,15,640,360);
     
     //copy AVCodecContext to AVCodecParameters
-    avcodec_parameters_from_context(tmr->out_stream->codecpar, tmr->out_video_ctx);
-    av_stream_set_r_frame_rate(tmr->out_stream, tmr->out_video_ctx->time_base);
-    tmr->out_stream->time_base = tmr->out_video_ctx->time_base;
+    avcodec_parameters_from_context(tmr->out_stream->codecpar, out_video_ctx);
+    av_stream_set_r_frame_rate(tmr->out_stream, out_video_ctx->time_base);
+    tmr->out_stream->time_base = out_video_ctx->time_base;
 
-
+    avcodec_free_context(&in_video_ctx);
+    avcodec_free_context(&out_video_ctx);
     return 0;
 }
 
-int openfile(const char* filename,TsManager *tmr){
+int open_file(const char* filename,TsManager *tmr){
     int ret = 0;
     printf("========== Output Information ==========\n");
     av_dump_format(tmr->ofmt_ctx, 0, filename, 1);
@@ -180,32 +176,32 @@ int openfile(const char* filename,TsManager *tmr){
     //Write file header
     if ((ret = avformat_write_header(tmr->ofmt_ctx, &tmr->opts) )< 0){
         printf("Error occurred when opening output file %s\n",av_err2str(ret));
-         return ret;
+        return ret;
     }
     return ret;
 }
 
-int GenerateAVPacket(AVPacket *pkt, const uint8_t *buf,int fsize){
+int generate_AVPacket(TsManager *tmr, AVPacket *pkt, const uint8_t *buf,int fsize){
     int ret = av_new_packet(pkt, fsize);
     if (ret < 0){
         printf("Error GenerateAVPacket%s\n",av_err2str(ret));
         return -1;
     }
-    pkt->flags |= ( 0 >= getVopType( buf, fsize ) ) ? AV_PKT_FLAG_KEY : 0;   
-    if ( waitkey ){
+    pkt->flags |= ( 0 >= get_vop_type( buf, fsize ) ) ? AV_PKT_FLAG_KEY : 0;   
+    if ( tmr->wait_key_frame ){
         if ( 0 == ( pkt->flags & AV_PKT_FLAG_KEY ) ){
             av_packet_unref(pkt);
             return -1;
         }
         else{
-            waitkey = 0;
+            tmr->wait_key_frame = 0;
         }
     }
     memcpy(pkt->data, buf, fsize);
     return 0;
 }
 
-static int GenerateTsFile(TsManager *tmr){
+static int set_bitstream_filter(TsManager *tmr){
     int ret = 0;
 
     const AVBitStreamFilter *bsf= av_bsf_get_by_name("h264_mp4toannexb");
@@ -225,8 +221,6 @@ static int GenerateTsFile(TsManager *tmr){
         return ret;
     }
     tmr->bsf_ctx->time_base_in = tmr->in_stream->time_base;
-    printf("tmr->in_stream->time_base: %d\n", tmr->in_stream->time_base.num);
-    printf("tmr->bsf_ctx->time_base_in: %d\n", tmr->bsf_ctx->time_base_in.num);
     if((ret = av_bsf_init(tmr->bsf_ctx)) < 0) {
         printf("call av_bsf_init, ret:%d\n", ret);
         av_bsf_free(&tmr->bsf_ctx);
@@ -239,15 +233,14 @@ static int GenerateTsFile(TsManager *tmr){
         return ret;
     }
     tmr->out_stream->time_base = tmr->bsf_ctx->time_base_out;
-    printf("tmr->out_stream->time_base: %d\n", tmr->out_stream->time_base.num);
     return ret;
 }
 
-int processPacket(TsManager *tmr,AVPacket *pkt,int stream_index){
+int process_packet(TsManager *tmr,AVPacket *pkt,int stream_index){
      printf("d\n");
     int ret = 0;
-    // tmr->out_stream->codecpar->codec_tag = 0;
-    //Write PTS
+    tmr->out_stream->codecpar->codec_tag = 0;
+    //Write PTS/DTS
     // Duration between 2 frames (s)
     double calc_duration = 1 * av_q2d(tmr->in_stream->r_frame_rate);
     //Parameters
@@ -255,17 +248,10 @@ int processPacket(TsManager *tmr,AVPacket *pkt,int stream_index){
     pkt->pts = tmr->frameindex * pkt->duration * av_q2d(tmr->in_stream->time_base);
     pkt->dts = pkt->pts;
     tmr->frameindex++;
-    //Convert PTS/DTS
-    pkt->pts = av_rescale_q_rnd(pkt->pts, tmr->in_stream->time_base, 
-        tmr->out_stream->time_base, AV_ROUND_NEAR_INF | AV_ROUND_PASS_MINMAX);
-    pkt->dts = av_rescale_q_rnd(pkt->dts, tmr->in_stream->time_base, 
-        tmr->out_stream->time_base, AV_ROUND_NEAR_INF | AV_ROUND_PASS_MINMAX);
-    pkt->duration = av_rescale_q(pkt->duration, tmr->in_stream->time_base, tmr->out_stream->time_base);
-    pkt->pos = -1;
+
     pkt->stream_index = stream_index;
-    printf("Write 1 Packet. size:%5d\tpts:%lld\t dts:%lld duration %f\n", pkt->size, pkt->pts, pkt->dts,av_q2d(tmr->in_stream->r_frame_rate));
+    printf("Write 1 Packet. size:%5d\tpts:%lld\t dts:%lld\n", pkt->size, pkt->pts, pkt->dts);
     //Write
-    // printf("f %p %p\n",tmr,tmr->bsf_ctx);
     if((ret = av_bsf_send_packet(tmr->bsf_ctx, pkt)) < 0)
     {
         printf("call av_bsf_send_packet, %s\n", av_err2str(ret));
@@ -285,15 +271,15 @@ int processPacket(TsManager *tmr,AVPacket *pkt,int stream_index){
     // av_packet_unref(pkt);
 }
 
-void CloseAll(TsManager *tmr){
+void close_all(TsManager *tmr){
     av_write_trailer(tmr->ofmt_ctx);
     av_bsf_free(&tmr->bsf_ctx);
     /* close output */
     if (tmr->ofmt_ctx && !(tmr->ofmt_ctx->oformat->flags & AVFMT_NOFILE)){
         avio_close(tmr->ofmt_ctx->pb);
     }
-    avcodec_free_context(&tmr->out_video_ctx);
     avformat_free_context(tmr->ofmt_ctx);
+    avformat_free_context(tmr->ifmt_ctx);
 }
 
 int GlobalInit(){
@@ -306,55 +292,28 @@ int main(int argc, char const *argv[])
     av_register_all();
     TsManager mgr;
     mgr.frameindex=0;
-    encodeSetting("test.ts",&mgr);
-    GenerateTsFile(&mgr);
-    openfile("test.ts",&mgr);
-    // printf("oo %p %p\n",&mgr,mgr.bsf_ctx);
+    mgr.wait_key_frame=1;
+    encode_setting("test.ts",&mgr);
+    set_bitstream_filter(&mgr);
+    open_file("test.ts",&mgr);
     const int BUFFERSIZE = 81920;    
     uint8_t buffer[BUFFERSIZE]={0};
     char name [100]={0};
     for (int ii=1;ii!=2768;ii++){
-        snprintf ( name, 100, "/Users/kate_hung/Documents/hlsdemo/BackhandShotsAllEnglandOpenLow/frame%d.h264", ii);
+        snprintf ( name, 100, "BackhandShotsAllEnglandOpenLow/frame%d.h264", ii);
         printf("%s\n",name);
         FILE * filp = fopen(name, "rb"); 
         int bytes_read = fread(buffer, sizeof(uint8_t), BUFFERSIZE, filp);
         printf("read %d %p\n",bytes_read,buffer);
         AVPacket pkt;
-        // AVPacket *pkt = GenerateAVPacket(buffer,bytes_read);
-        int ok = GenerateAVPacket(&pkt,buffer,bytes_read);
-        // AVPacket pkt;
-        // printf("b\n");
-        // int ret = av_new_packet(&pkt, bytes_read);
-        //  printf("d\n");
-        // if (ret < 0){
-        //     printf("Error GenerateAVPacket%s\n",av_err2str(ret));
-        // }
-        // printf("c\n");
-    // pkt->flags |= ( 0 >= getVopType( buf, fsize ) ) ? AV_PKT_FLAG_KEY : 0;   
-
-    //  if ( waitkey ){
-    //     if ( 0 == ( pkt->flags & AV_PKT_FLAG_KEY ) ){
-    //         av_packet_unref(pkt);
-    //         return NULL;
-    //     }
-    //     else{
-    //         waitkey = 0;
-    //     }
-    // }
-    
-        // memcpy(pkt.data, buffer, bytes_read);
-        //  for (int ii=0;ii!=10;ii++){
-        //      printf("pkt->data[%d] %X\n",ii,pkt.data[ii]);
-        // }
+        int ok = generate_AVPacket(&mgr,&pkt,buffer,bytes_read);
         if (ok==0){
-            processPacket(&mgr,&pkt,0);
+            process_packet(&mgr,&pkt,0);
             av_packet_unref(&pkt);
         }
-        
-
         fclose(filp);
     }
-    CloseAll(&mgr);
+    close_all(&mgr);
     return 0;
 }
 // gcc -L /usr/local/lib/ h264TsMuxer.c -o tsmuxer -lavformat -lavcodec -lavutil -lm -lpthread -lswresample -lx264 -lbz2 -lz
