@@ -1,0 +1,11 @@
+cmd for build code 
+gcc -L /usr/local/lib/ h264TsMuxer.c -o tsmuxer -lavformat -lavcodec -lavutil -lm -lpthread -lswresample -lx264 -lbz2 -lz
+
+examplev1.c from ffmpeg example of muxing.c
+ref https://www.ffmpeg.org/doxygen/4.1/muxing_8c-example.html
+
+examplev2.c from 
+ref http://www.xuhj.top/2018/06/26/ffmpeg-convert-to-ts-stream/
+
+other refer:
+https://stackoverflow.com/questions/5964142/raw-h264-frames-in-mpegts-container-using-libavcodec
