@@ -21,14 +21,14 @@ func main() {
 	defer C.free(unsafe.Pointer(sname))
 	C.NewTsManagerInstsnce(&mgr, sname, 15, 640, 360, 400000)
 	for ii := 1; ii != 2768; ii++ {
-		fname := fmt.Sprintf("/Users/kate_hung/Documents/hlsdemo/BackhandShotsAllEnglandOpenLow/frame%d.h264", ii)
+		fname := fmt.Sprintf("BackhandShotsAllEnglandOpenLow/frame%d.h264", ii)
 		dat, err := ioutil.ReadFile(fname)
 		if err != nil {
 			log.Println(err)
 			continue
 		}
 		size := len(dat)
-		C.HandleReceiveFrameData(&mgr, (*C.uint8_t)(unsafe.Pointer(&dat[0])), C.int(size))
+		C.HandleReceiveFrameData(&mgr, (*C.uint8_t)(unsafe.Pointer(&dat[0])), C.int(size), C.int64_t((ii-1)*1000/15))
 	}
 	C.DeleteTsManager(&mgr)
 }
